@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/shared" },
+    { "path": "apps/control-plane" },
+    { "path": "apps/dialer" },
+    { "path": "apps/call-worker" }
+  ]
+}

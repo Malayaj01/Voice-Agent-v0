@@ -1,0 +1,18 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+.env
+.env.*
+!.env.example
+
+# Call data — see ARCHITECTURE.md §10. Never commit recordings, transcripts, or
+# anything derived from the call corpus. This repo is public.
+recordings/
+transcripts/
+corpus/
+*.wav
+*.mp3
+*.opus
+
+.DS_Store
