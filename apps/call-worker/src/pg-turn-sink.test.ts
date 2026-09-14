@@ -23,6 +23,18 @@ import { createCallSession } from './session.js'
 
 const DATABASE_URL = process.env['DATABASE_URL']
 
+/**
+ * Skipping locally is intended. Skipping in CI is not: it would leave the SQL permanently
+ * unexecuted while the build stayed green, which is the same false-green trap as pointing
+ * `node --test` at a directory. Fail loudly instead.
+ */
+if (process.env['CI'] === 'true' && DATABASE_URL === undefined) {
+  throw new Error(
+    'DATABASE_URL is not set in CI. These tests are the only thing that executes the turns ' +
+      'INSERT against a real schema; they must never silently skip here.',
+  )
+}
+
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const FLOW = parseFlow(readFileSync(join(REPO_ROOT, 'db', 'seed', 'flow-v1.yaml'), 'utf8'))
 
