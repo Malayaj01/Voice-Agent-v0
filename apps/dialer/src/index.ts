@@ -41,5 +41,8 @@ async function main(): Promise<void> {
 
 main().catch((err: unknown) => {
   console.error(`[${SERVICE}] failed to start:`, err)
-  process.exitCode = 1
+  // exit(), not exitCode: a worker that cannot bind its port or read its flow must die so the
+  // supervisor restarts it. Setting exitCode leaves it alive and half-initialised for as long
+  // as any handle remains, which looks like a running worker to everything except traffic.
+  process.exit(1)
 })
