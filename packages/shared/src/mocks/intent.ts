@@ -5,9 +5,13 @@
  * the FSM picks that from the approved set. Keep that boundary in any real implementation
  * that replaces this.
  *
- * The labels below are a starting set matching the §7.1 flow example. They are NOT the
- * taxonomy — §10 says the real one comes from clustering the call corpus, and the current
- * hand-written labels were guessed. Treat these as placeholders to build against.
+ * The rules are ported from the predecessor's src/script/intent.ts so that the mock speaks
+ * the same 19-label vocabulary the flow document branches on — a classifier emitting labels
+ * the FSM has never heard of would send every turn down the off-script path.
+ *
+ * Those 19 labels are NOT the taxonomy. §10 is explicit that the real one comes from
+ * clustering the call corpus and that the current labels were guessed; they are here to
+ * build against until that work happens.
  */
 
 import type { CallCtx, Intent, IntentClassifier } from '../providers.js'
@@ -22,16 +26,68 @@ export interface MockIntentRule {
 /**
  * Evaluated in order — first match wins, so the consequential intents come first. `dnc`
  * outranks everything: "yes, but stop calling me" is a DNC request, not an acknowledgement.
+ * `accept_slot` outranks `acknowledge` so "theek hai, Monday 11" books a slot rather than
+ * merely agreeing. The ordering is the original's, deliberately.
  */
 export const DEFAULT_INTENT_RULES: readonly MockIntentRule[] = [
-  { intent: 'dnc', match: /\b(do not call|don'?t call|stop calling|remove me|unsubscribe|dnd)\b/i },
-  { intent: 'not_interested', match: /\b(not interested|no thanks|nahi chahiye|mat karo)\b/i },
-  { intent: 'no_time', match: /\b(busy|not now|no time|later|baad mein|abhi nahi|meeting)\b/i },
-  { intent: 'callback_later', match: /\b(call back|callback|call me|kal|tomorrow)\b/i },
-  { intent: 'price_question', match: /\b(price|cost|charges|rate|kitna|how much)\b/i },
-  { intent: 'human_request', match: /\b(real person|human|agent|manager|someone else)\b/i },
-  { intent: 'acknowledge', match: /\b(yes|yeah|yep|sure|ok|okay|haan|han|theek|go ahead|tell me)\b/i },
-  { intent: 'negative', match: /\b(no|nope|nahi|na)\b/i },
+  {
+    intent: 'dnc',
+    match:
+      /\b(do not call|don'?t call|dnc|remove (me|my number)|opt[- ]?out|stop calling|mat call|dobara (nahi|mat) call)\b/i,
+  },
+  {
+    intent: 'hostile',
+    match: /\b(scam|fraud|idiot|stupid|shut up|harass|complaint|lawyer|police)\b/i,
+  },
+  { intent: 'voicemail', match: /\b(voicemail|leave a message|after the (beep|tone))\b/i },
+  {
+    intent: 'gatekeeper',
+    match:
+      /\b(who is (this|calling)|not available|in a meeting|i('ll| will) take a message|assistant to)\b/i,
+  },
+  {
+    intent: 'wrong_person',
+    match: /\b(wrong (number|person)|no one (by|named)|galat (number|aadmi))\b/i,
+  },
+  {
+    intent: 'is_this_ai',
+    match: /\b(are you (an? )?(ai|bot|robot)|is this (an? )?(ai|bot|recording)|kya (yeh )?ai)\b/i,
+  },
+  { intent: 'who_gave_number', match: /\b(who gave|where did you get|number kahan|kaise mila)\b/i },
+  {
+    intent: 'already_use_competitor',
+    match: /\b(already (have|use)|pehle se|we use \w+|competitor)\b/i,
+  },
+  { intent: 'how_much', match: /\b(how much|pricing|price|cost|expensive|kitna)\b/i },
+  { intent: 'send_email', match: /\b(send (me )?(an? )?email|email me|email bhej|whatsapp)\b/i },
+  { intent: 'call_later', match: /\b(call (me )?(later|back)|baad mein|next week|kal call)\b/i },
+  {
+    intent: 'no_time',
+    match: /\b(no time|can'?t talk|bad time|time nahi|abhi nahi|abhi busy|busy)\b/i,
+  },
+  {
+    intent: 'not_interested',
+    match: /\b(not interested|no thanks|don'?t (need|want)|zaroorat nahi|nahi chahiye)\b/i,
+  },
+  {
+    intent: 'accept_slot',
+    match:
+      /\b(first|second|gyarah|teen|eleven|three|book it|book kar|lock (it|kar)|that one|pehla|doosra|monday|tuesday|11|3 baje)\b/i,
+  },
+  {
+    intent: 'decline_slots',
+    match: /\b(none (of )?(those|them)|no slot|doesn'?t work|dono nahi)\b/i,
+  },
+  {
+    intent: 'give_availability',
+    match: /\b(i'?m free|i am free|available|thursday|friday|wednesday)\b/i,
+  },
+  {
+    intent: 'acknowledge',
+    match:
+      /\b(okay|ok|haan|han|hmm|ji|yes|yeah|yep|sure|theek|achha|accha|boliye|go on|tell me|continue)\b/i,
+  },
+  { intent: 'interested', match: /\b(interested|sounds good|let'?s do|karte hain|chalo)\b/i },
 ]
 
 export const FALLBACK_INTENT = 'unclear'

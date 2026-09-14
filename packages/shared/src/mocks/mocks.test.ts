@@ -182,7 +182,8 @@ describe('mock intent classifier', () => {
     const clf = new MockIntentClassifier()
     assert.equal((await clf.classify(CTX, 'haan theek hai')).label, 'acknowledge')
     assert.equal((await clf.classify(CTX, 'I am busy right now')).label, 'no_time')
-    assert.equal((await clf.classify(CTX, 'kitna price hai')).label, 'price_question')
+    assert.equal((await clf.classify(CTX, 'theek hai Monday 11 book kar do')).label, 'accept_slot')
+    assert.equal((await clf.classify(CTX, 'kitna price hai')).label, 'how_much')
   })
 
   it('ranks dnc above a co-occurring acknowledgement', async () => {
@@ -193,10 +194,15 @@ describe('mock intent classifier', () => {
 
   it('falls back to unclear with low confidence rather than guessing', async () => {
     const clf = new MockIntentClassifier()
-    const intent = await clf.classify(CTX, 'mmm hmm what was that')
+    const intent = await clf.classify(CTX, 'sorry the line broke up')
 
     assert.equal(intent.label, 'unclear')
     assert.ok(intent.confidence < 0.5)
+  })
+
+  it('a filler noise still reads as acknowledgement, as in the original rules', async () => {
+    const clf = new MockIntentClassifier()
+    assert.equal((await clf.classify(CTX, 'mmm hmm')).label, 'acknowledge')
   })
 
   it('applies the configured artificial latency', async () => {
@@ -209,10 +215,10 @@ describe('mock intent classifier', () => {
 
   it('records classifications with the state they were made in', async () => {
     const clf = new MockIntentClassifier()
-    await clf.classify({ ...CTX, state: 'OBJ_NO_TIME' }, 'call back tomorrow')
+    await clf.classify({ ...CTX, state: 'CLOSE' }, 'call me back later')
 
-    assert.equal(clf.classified[0]?.state, 'OBJ_NO_TIME')
-    assert.equal(clf.classified[0]?.intent.label, 'callback_later')
+    assert.equal(clf.classified[0]?.state, 'CLOSE')
+    assert.equal(clf.classified[0]?.intent.label, 'call_later')
   })
 
   it('FixedIntentClassifier drives an FSM down one branch', async () => {
