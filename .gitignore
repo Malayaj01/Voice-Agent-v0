@@ -16,3 +16,6 @@ corpus/
 *.opus
 
 .DS_Store
+
+# Pre-rendered line audio. Regenerated at boot; never committed.
+.cache/

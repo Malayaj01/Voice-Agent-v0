@@ -1,3 +1,4 @@
+export * from './audio/cache.js'
 export * from './domain.js'
 export * from './env.js'
 export * from './health.js'
