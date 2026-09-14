@@ -14,6 +14,24 @@ jobs:
     name: typecheck + test
     runs-on: ubuntu-latest
 
+    services:
+      # pgvector rather than stock postgres: migration 0005 creates the vector extension.
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: voice_agent_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/voice_agent_test
+
     steps:
       - uses: actions/checkout@v4
 
@@ -23,6 +41,15 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      # Applies the schema the turn loop writes to. Also the only check that the migrations
+      # actually run in order against a clean database.
+      - name: Apply migrations
+        run: |
+          for f in db/migrations/*.sql; do
+            echo "-- $f"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$f"
+          done
 
       # `tsc -b` across the workspace. Strict, so this is the real gate.
       - name: Typecheck
