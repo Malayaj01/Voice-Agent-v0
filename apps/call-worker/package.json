@@ -5,9 +5,11 @@
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test": "node --test \"dist/**/*.test.js\""
   },
   "dependencies": {
-    "@voice-agent/shared": "*"
+    "@voice-agent/shared": "*",
+    "pg": "^8.23.0"
   }
 }
