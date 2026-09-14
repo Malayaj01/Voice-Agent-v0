@@ -10,6 +10,7 @@
 import { createHealthServer, numberEnv, onShutdown, optionalEnv } from '@voice-agent/shared'
 
 import { startFlowRuntime } from './flow.js'
+import { envToTtsRuntimeEnv, startTtsRuntime } from './tts-runtime.js'
 
 const SERVICE = 'call-worker'
 const VERSION = '0.1.0'
@@ -23,13 +24,18 @@ async function main(): Promise<void> {
     databaseUrl: optionalEnv('DATABASE_URL', ''),
   })
 
-  // TODO(phase-1): LiveKit Agents session wiring — replace the mock providers with a real
-  // SIP-terminated media loop. createCallSession() is already the shape it plugs into.
+  // Pre-warm before the health server binds. A worker that reported healthy with a cold cache
+  // would take calls it can only answer seconds late — on CPU Kokoro a miss is ~3.9s to first
+  // byte against a 250ms budget, so "ready" has to mean "warm".
+  const tts = await startTtsRuntime(envToTtsRuntimeEnv(), flow.loader.current.flow)
+
+  // TODO(phase-1): LiveKit Agents session wiring — replace the mock STT with a real
+  // SIP-terminated media loop. createCallSession() already takes tts.tts as its provider.
   const health = await createHealthServer({
     service: SERVICE,
     version: VERSION,
     port,
-    checks: { flow: flow.check },
+    checks: { flow: flow.check, tts: tts.check },
   })
   console.log(`[${SERVICE}] listening on :${port} (max ${maxConcurrent} concurrent)`)
 
