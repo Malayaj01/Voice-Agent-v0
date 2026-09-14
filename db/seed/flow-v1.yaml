@@ -120,14 +120,10 @@ states:
       say: close
       goto: CLOSE
 
-  OBJECTION_HANDLING:
-    on:
-      acknowledge: CLOSE
-      interested: CLOSE
-      accept_slot: CLOSE
-    default:
-      say: close
-      goto: CLOSE
+  # There is no OBJECTION_HANDLING state. The predecessor declared one in its CallState enum
+  # and had a `case` for it, but never assigned it — handleObjection() always moved to CLOSE.
+  # It was dead there and `voice-flow validate` flagged it as unreachable here, so it is gone
+  # rather than carried forward as a state no reader can place.
 
   CLOSE:
     say: close
@@ -159,8 +155,9 @@ states:
   FALLBACK:
     terminal: true
 
-  ENDED:
-    terminal: true
+  # No ENDED state either: the original used one alongside a `session.ended` boolean. Here
+  # termination is `end: true` plus `terminal: true`, so a separate state would be a second
+  # way to express the same thing — and an unreachable one.
 
 # ---------------------------------------------------------------------------------------
 # The closed set of lines.
@@ -257,6 +254,6 @@ lines:
     en-IN: "Sure, I can call back. Or if it's easier, lock one time now — {{slot_pair}}?"
     hi-IN-hinglish: "Sure, baad mein call kar sakta hoon. Ya abhi ek time fix kar dein — {{slot_pair}}?"
 
-  rebuttal_no_time:
-    en-IN: "Of course. I'll be quick — {{slot_pair}}?"
-    hi-IN-hinglish: "Bilkul. Jaldi karta hoon — {{slot_pair}}?"
+  # No rebuttal_no_time: the objection routine's `no_time` rule hangs up politely before the
+  # generic `rebuttal_{{intent}}` rule can fire, so such a line could never be spoken. That is
+  # the intended behaviour — "I don't have time" is honoured, not argued with.
