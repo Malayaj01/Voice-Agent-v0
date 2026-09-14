@@ -1,0 +1,262 @@
+# Voice Agent V1 — conversation flow, version 1.
+#
+# Ported from the predecessor's src/script/{stateMachine,lines,objections}.ts. The logic is
+# unchanged; it now lives in data. This document is the seed for script_versions.yaml —
+# ARCHITECTURE.md §7.1.
+#
+# Everything the bot can say is in `lines` below. That is deliberate: the set is closed, so
+# it is reviewable in one read, it is pre-renderable to audio (§6), and there is no path by
+# which a model phrases something on a live sales call.
+#
+# Hard guardrail (§7.4): price, dates, legal and medical claims are never generated. Note
+# that `rebuttal_how_much` declines to quote a number and routes to the demo instead.
+
+version: 1
+initial: OPENING
+default_lang: en-IN
+
+# ---------------------------------------------------------------------------------------
+# Evaluated before any per-state handling, from every state.
+# ---------------------------------------------------------------------------------------
+global:
+  dnc:
+    say: dnc
+    goto: WRAP_UP
+    end: true
+    flag: do_not_call_requested
+
+  hostile:
+    say: fallback
+    goto: FALLBACK
+    end: true
+    flag: hostile_exit
+
+  wrong_person:
+    say: wrong_person
+    goto: WRAP_UP
+    end: true
+
+  # Off-script: hold position and re-anchor. Does not advance the flow.
+  unclear:
+    say: hold_on_script
+  voicemail:
+    say: hold_on_script
+  gatekeeper:
+    say: hold_on_script
+
+# ---------------------------------------------------------------------------------------
+# Shared objection routine. Applied when no per-state transition matches.
+# Rule order matters and mirrors the original handleObjection().
+# ---------------------------------------------------------------------------------------
+objections:
+  intents:
+    - not_interested
+    - already_use_competitor
+    - send_email
+    - how_much
+    - is_this_ai
+    - no_time
+    - who_gave_number
+    - call_later
+
+  rules:
+    # Raised the same hard objection twice — stop.
+    - when:
+        repeated: true
+        intent_in: [not_interested, who_gave_number]
+      say: wrap_up_no_slot
+      goto: WRAP_UP
+      end: true
+
+    # Three distinct objections and still not interested — stop.
+    - when:
+        count_gte: 3
+        intent_in: [not_interested]
+      say: wrap_up_no_slot
+      goto: WRAP_UP
+      end: true
+
+    # "I don't have time" is honoured, not rebutted.
+    - when:
+        intent_in: [no_time]
+      say: no_time_hangup
+      goto: WRAP_UP
+      end: true
+
+    - say: rebuttal_{{intent}}
+      goto: CLOSE
+
+# ---------------------------------------------------------------------------------------
+on_silence:
+  - when:
+      nudges_gte: 2
+    say: silence_hangup
+    goto: WRAP_UP
+    end: true
+    flag: silence_hangup
+  - say: nudge
+
+# ---------------------------------------------------------------------------------------
+states:
+  OPENING:
+    say: opening
+    default:
+      say: context_bridge
+      goto: CONTEXT_BRIDGE
+
+  CONTEXT_BRIDGE:
+    say: context_bridge
+    default:
+      say: pitch
+      goto: PITCH
+
+  PITCH:
+    say: pitch
+    on:
+      acknowledge: CLOSE
+      interested: CLOSE
+      accept_slot: CLOSE
+    default:
+      say: close
+      goto: CLOSE
+
+  OBJECTION_HANDLING:
+    on:
+      acknowledge: CLOSE
+      interested: CLOSE
+      accept_slot: CLOSE
+    default:
+      say: close
+      goto: CLOSE
+
+  CLOSE:
+    say: close
+    on:
+      accept_slot:
+        say: wrap_up_booked
+        goto: WRAP_UP
+        end: true
+      interested:
+        say: confirm_slot
+      acknowledge:
+        say: confirm_slot
+      give_availability:
+        say: send_calendar_link
+        goto: WRAP_UP
+        end: true
+        flag: availability_captured
+      decline_slots:
+        say: send_calendar_link
+        goto: WRAP_UP
+        end: true
+        flag: availability_captured
+    default:
+      say: close
+
+  WRAP_UP:
+    terminal: true
+
+  FALLBACK:
+    terminal: true
+
+  ENDED:
+    terminal: true
+
+# ---------------------------------------------------------------------------------------
+# The closed set of lines.
+# ---------------------------------------------------------------------------------------
+lines:
+  opening:
+    en-IN: "Hi {{contact_first_name}}, this is {{company}}'s AI assistant. Got a minute?"
+    hi-IN-hinglish: "Namaste {{contact_first_name}}, main {{company}} ka AI assistant hoon. Ek minute hai?"
+
+  context_bridge:
+    en-IN: "I'll be quick. You run {{company_name}} in {{industry}} — we help teams there handle calls automatically."
+    hi-IN-hinglish: "Main jaldi bataata hoon. Aap {{company_name}} chalate hain {{industry}} mein — hum waise teams ki calls automatically handle karne mein help karte hain."
+
+  pitch:
+    en-IN: "The idea is simple: the assistant picks up every call, answers the routine questions, and passes the real ones to your team."
+    hi-IN-hinglish: "Idea simple hai: assistant har call uthata hai, routine sawaal khud answer karta hai, aur zaroori calls aapki team ko pass karta hai."
+
+  close:
+    en-IN: "Worth a short demo? I have {{slot_pair}}."
+    hi-IN-hinglish: "Ek chhota demo dekh lein? Mere paas {{slot_pair}} hai."
+
+  confirm_slot:
+    en-IN: "Great — shall I lock {{slot_first}}?"
+    hi-IN-hinglish: "Badhiya — {{slot_first}} fix kar doon?"
+
+  send_calendar_link:
+    en-IN: "All good — I'll send a calendar link and you can pick a time."
+    hi-IN-hinglish: "Theek hai, calendar link bhej dunga. Aap jab free ho tab choose kar lena."
+
+  wrap_up_booked:
+    en-IN: "Done — {{slot_booked}} it is. You'll get a calendar invite. Thanks for your time."
+    hi-IN-hinglish: "Ho gaya — {{slot_booked}} fix. Calendar invite aa jayega. Time dene ke liye shukriya."
+
+  wrap_up_no_slot:
+    en-IN: "Understood — I won't take more of your time. Thanks."
+    hi-IN-hinglish: "Samajh gaya — aur time nahi lunga. Dhanyavaad."
+
+  no_time_hangup:
+    en-IN: "Of course, no problem. I won't take your time now. Thank you."
+    hi-IN-hinglish: "Bilkul, koi problem nahi. Abhi time nahi lunga. Thank you."
+
+  dnc:
+    en-IN: "Understood. I'm removing this number right now — you won't get another call from us."
+    hi-IN-hinglish: "Samajh gaya. Main abhi is number ko hata deta hoon — dobara call nahi aayegi."
+
+  fallback:
+    en-IN: "I'll drop off here. Apologies for the interruption."
+    hi-IN-hinglish: "Main call yahin rakh deta hoon. Disturb karne ke liye maafi."
+
+  wrong_person:
+    en-IN: "Looks like I have the wrong person. I'll drop off."
+    hi-IN-hinglish: "Galat number lag raha hai. Main drop karta hoon."
+
+  hold_on_script:
+    en-IN: "Sorry, I didn't catch that. {{anchor_question}}"
+    hi-IN-hinglish: "Maaf kijiye, samajh nahi aaya. {{anchor_question}}"
+
+  nudge:
+    en-IN: "Are you still there?"
+    hi-IN-hinglish: "Aap line par hain?"
+
+  silence_hangup:
+    en-IN: "I'll let you go for now. Thanks for your time."
+    hi-IN-hinglish: "Abhi ke liye call rakh deta hoon. Time dene ke liye shukriya."
+
+  # -- Rebuttals, addressed as rebuttal_{{intent}} by the objection routine --------------
+
+  rebuttal_not_interested:
+    en-IN: "Sure, no problem. One thing — if a short demo isn't useful, we stop there. {{slot_pair}}?"
+    hi-IN-hinglish: "Sure, koi baat nahi. Bas ek cheez — agar demo useful na lage toh aage kuch nahi karna. {{slot_pair}}?"
+
+  rebuttal_already_use_competitor:
+    en-IN: "That's fine — this isn't about replacing what you have. We can just compare whether it helps your current setup. Short demo?"
+    hi-IN-hinglish: "Achha, perfect. Replace karne ki baat nahi hai. Bas compare kar lete hain ki aapke current setup mein kuch improve hota hai ya nahi. Short demo chalega?"
+
+  rebuttal_send_email:
+    en-IN: "Sure, I'll email you. One suggestion — a live call is clearer than an email. {{slot_pair}}?"
+    hi-IN-hinglish: "Bilkul, email kar deta hoon. Ek suggestion — live call email se zyada clear hoti hai. {{slot_pair}}?"
+
+  # Price is on the §7.4 deny-list. This line routes to the demo rather than quoting.
+  rebuttal_how_much:
+    en-IN: "It depends on call volume and what you need, so I don't want to give you a random number. The demo covers exact pricing. {{slot_pair}}?"
+    hi-IN-hinglish: "Ye call volume aur requirements par depend karta hai, isliye random number nahi dena chahta. Demo mein exact pricing bhi cover hoti hai. {{slot_pair}}?"
+
+  rebuttal_is_this_ai:
+    en-IN: "Yes — I'm {{company}}'s AI assistant, and you're talking to me right now. The demo shows how it handles real calls."
+    hi-IN-hinglish: "Haan — main {{company}} ka AI assistant hoon, aap abhi mujhse hi baat kar rahe hain. Demo mein dikh jayega ki ye real calls kaise handle karta hai."
+
+  rebuttal_who_gave_number:
+    en-IN: "We reach out to relevant contacts at {{company_name}} for business outreach. If you'd rather I didn't call again, I'll stop right here."
+    hi-IN-hinglish: "Hum {{company_name}} ke relevant contacts ko business outreach ke liye call karte hain. Agar aap nahi chahte toh main yahin stop kar deta hoon."
+
+  rebuttal_call_later:
+    en-IN: "Sure, I can call back. Or if it's easier, lock one time now — {{slot_pair}}?"
+    hi-IN-hinglish: "Sure, baad mein call kar sakta hoon. Ya abhi ek time fix kar dein — {{slot_pair}}?"
+
+  rebuttal_no_time:
+    en-IN: "Of course. I'll be quick — {{slot_pair}}?"
+    hi-IN-hinglish: "Bilkul. Jaldi karta hoon — {{slot_pair}}?"
