@@ -20,7 +20,13 @@
  */
 
 import type { Lang } from '../lang.js'
-import { transitionsOf, type Flow, type FlowGuard, type FlowTransition } from './flow.js'
+import {
+  transitionsOf,
+  type Flow,
+  type FlowDocument,
+  type FlowGuard,
+  type FlowTransition,
+} from './flow.js'
 import { resolveLine, type LineVars } from './lines.js'
 
 export interface FsmSnapshot {
@@ -57,11 +63,28 @@ export interface FsmInit {
   lang: Lang
   /** Substituted into `{{...}}` placeholders — contact name, company, and so on. */
   vars?: LineVars
+  /**
+   * `script_versions.id` this flow came from. Stamped on the call row so conversion is
+   * attributable to a specific script revision (§7.5). Null for a flow loaded off disk.
+   */
+  scriptVersionId?: string | null
+}
+
+/** Builds a machine from a loaded document, carrying the script version through. */
+export function fsmFromDocument(doc: FlowDocument, lang: Lang, vars?: LineVars): Fsm {
+  return new Fsm({
+    flow: doc.flow,
+    lang,
+    scriptVersionId: doc.scriptVersionId,
+    ...(vars === undefined ? {} : { vars }),
+  })
 }
 
 export class Fsm {
   readonly flow: Flow
   readonly lang: Lang
+  /** The script version this machine is running, for §7.5 version stamping. */
+  readonly scriptVersionId: string | null
 
   private readonly vars: Record<string, string>
   private state: string
@@ -73,6 +96,7 @@ export class Fsm {
   constructor(init: FsmInit) {
     this.flow = init.flow
     this.lang = init.lang
+    this.scriptVersionId = init.scriptVersionId ?? null
     this.vars = { ...init.vars }
     this.state = init.flow.initial
   }
