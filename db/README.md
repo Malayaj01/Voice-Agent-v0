@@ -24,6 +24,33 @@ files are grouped by concern, not by table count.
 | `0004_calls_turns.sql` | `calls`, `turns` |
 | `0005_faq_entries.sql` | `faq_entries` |
 
+## The flow (script_versions)
+
+`seed/flow-v1.yaml` is the conversation flow — ARCHITECTURE.md §7.1. It is authored as a
+file and published into `script_versions`, which is what workers read.
+
+```bash
+# validate before anything else; --strict also fails on dead lines and unreachable states
+npx voice-flow validate db/seed/flow-v1.yaml --strict
+
+# every line the flow can actually say, for one lead, with §6 TTS cache keys
+npx voice-flow render db/seed/flow-v1.yaml --lang hi-IN-hinglish --voice bulbul-v3 \
+  --lead lead.json > precache.json
+
+# write it to script_versions; --activate makes it the version new calls use
+DATABASE_URL=... npx voice-flow publish db/seed/flow-v1.yaml --activate
+```
+
+`render` lists **reachable** lines, not every declared line: rendering audio for a line the
+graph cannot reach wastes synthesis and hides the fact that it is dead. It exits non-zero if
+any line still holds an unfilled `{{placeholder}}`, because such a line's cache key is never
+looked up and the pre-cache would silently miss on it.
+
+Workers poll for a new active version (`FLOW_POLL_MS`, default 30s) and hot-swap. A version
+that fails validation never replaces a good one — the worker keeps serving the last good flow
+and reports `degraded`. Calls already in progress keep the version they started with, so the
+`script_version_id` stamped on the call row stays true (§7.5).
+
 ## Extensions
 
 - `pgcrypto` — `gen_random_uuid()`
