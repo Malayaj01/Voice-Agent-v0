@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@voice-agent/shared": "*",
+    "kokoro-js": "^1.2.1",
     "pg": "^8.23.0"
   }
 }
