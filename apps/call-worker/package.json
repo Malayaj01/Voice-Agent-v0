@@ -9,8 +9,10 @@
     "test": "node --test \"dist/**/*.test.js\""
   },
   "dependencies": {
+    "@livekit/rtc-node": "^1.0.0",
     "@voice-agent/shared": "*",
     "kokoro-js": "^1.2.1",
+    "livekit-server-sdk": "^2.19.0",
     "pg": "^8.23.0"
   }
 }
