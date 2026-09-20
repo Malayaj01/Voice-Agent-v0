@@ -1,6 +1,7 @@
 export * from './audio/cache.js'
 export * from './audio/vad.js'
 export * from './audio/pcm.js'
+export * from './compliance/gates.js'
 export * from './domain.js'
 export * from './env.js'
 export * from './health.js'
