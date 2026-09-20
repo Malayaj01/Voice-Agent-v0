@@ -33,7 +33,7 @@
  * swap is an implementation detail behind TTSProvider, and it is.
  */
 
-import type { TTSProvider, Voice } from '@voice-agent/shared'
+import { trimSilence, type TTSProvider, type Voice } from '@voice-agent/shared'
 
 /** Minimal surface of kokoro-js that we depend on. */
 interface KokoroAudio {
@@ -56,6 +56,15 @@ export interface KokoroOptions {
   /** Maps our Voice.id to a Kokoro voice name when they differ. */
   voiceMap?: Readonly<Record<string, string>>
   defaultVoice?: string
+  /**
+   * Pause inserted between sentences, after each render's own padding is trimmed.
+   *
+   * Kokoro pads every generate() call, so concatenating per-sentence renders untouched puts
+   * 760-900ms of silence between sentences (measured across the flow's 22 lines). That is
+   * long enough for the VAD to endpoint mid-line and for the bot to sound like it forgot what
+   * it was saying. 120ms is an ordinary sentence break.
+   */
+  interSegmentGapMs?: number
 }
 
 export const KOKORO_SAMPLE_RATE = 24_000
@@ -100,6 +109,7 @@ export class KokoroTTSProvider implements TTSProvider {
       chunkMs: opts.chunkMs ?? 20,
       defaultVoice: opts.defaultVoice ?? 'af_heart',
       voiceMap: opts.voiceMap ?? {},
+      interSegmentGapMs: opts.interSegmentGapMs ?? 120,
     }
   }
 
@@ -147,7 +157,11 @@ export class KokoroTTSProvider implements TTSProvider {
 
     const chunkBytes = Math.round((KOKORO_SAMPLE_RATE * this.opts.chunkMs) / 1000) * 2
 
-    for (const segment of splitForStreaming(text)) {
+    const gap = Buffer.alloc(
+      Math.round((KOKORO_SAMPLE_RATE * this.opts.interSegmentGapMs) / 1000) * 2,
+    )
+
+    for (const [i, segment] of splitForStreaming(text).entries()) {
       if (cancelled()) return
 
       // The model cannot be interrupted mid-segment. The result of an in-flight generate is
@@ -156,7 +170,11 @@ export class KokoroTTSProvider implements TTSProvider {
       const result = await model.generate(segment, { voice: voiceName })
       if (cancelled()) return
 
-      const pcm = floatToPcm16(result.audio)
+      // Trim the render's own padding and impose a deliberate gap, rather than inheriting
+      // whatever silence the model happened to emit at each end.
+      const body = trimSilence(floatToPcm16(result.audio), KOKORO_SAMPLE_RATE)
+      const pcm = i === 0 || gap.byteLength === 0 ? body : Buffer.concat([gap, body])
+
       for (let at = 0; at < pcm.byteLength; at += chunkBytes) {
         if (cancelled()) return
         yield pcm.subarray(at, Math.min(at + chunkBytes, pcm.byteLength))
