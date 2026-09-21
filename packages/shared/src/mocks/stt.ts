@@ -85,6 +85,7 @@ export class MockSTTStream implements STTStream {
 
   private readonly cfg: Resolved
   private readonly listeners: { [E in keyof STTEvents]: STTEvents[E][] } = {
+    speech_start: [],
     partial: [],
     final: [],
     endpoint: [],
@@ -157,6 +158,9 @@ export class MockSTTStream implements STTStream {
     if (this.closed) return
     const text = this.nextTranscript()
     if (text === undefined) return
+
+    // Speech onset, before any transcription — the barge-in trigger.
+    this.emit('speech_start', '')
 
     if (this.cfg.emitPartials) {
       for (const partial of partialsOf(text)) {

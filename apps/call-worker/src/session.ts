@@ -20,8 +20,10 @@
  * 2. Generator cleanup is fired, not awaited, for the same reason. Awaiting
  *    `iterator.return()` would hand the timing back to the provider we just walked away from.
  *
- * 3. The trigger is the first `partial`, not `final`. Waiting for a settled transcript is
- *    several hundred ms too late — the bot would still be talking over the caller.
+ * 3. The trigger is the VAD's speech onset, not a transcript. Measured over real WebRTC, a
+ *    first `partial` from faster-whisper costs the partial interval plus an ASR round trip —
+ *    about a second — so barge-in keyed off it misses short lines entirely. The VAD knows in
+ *    ~40ms. `partial` remains wired as a fallback for providers with no onset signal.
  *
  * 4. Audio already handed to the transport keeps playing, so the sink is flushed too.
  *
@@ -42,16 +44,17 @@
 
 import { performance } from 'node:perf_hooks'
 
-import type {
-  Fsm,
-  IntentClassifier,
-  Lang,
-  STTProvider,
-  STTStream,
-  TTSProvider,
-  TurnSink,
-  TurnTimings,
-  Voice,
+import {
+  hasVadTiming,
+  type Fsm,
+  type IntentClassifier,
+  type Lang,
+  type STTProvider,
+  type STTStream,
+  type TTSProvider,
+  type TurnSink,
+  type TurnTimings,
+  type Voice,
 } from '@voice-agent/shared'
 
 import type { AudioSink } from './audio.js'
@@ -119,6 +122,8 @@ export class CallSession {
   /** Timing anchors for the turn in flight. */
   private lastPartialAt: number | undefined
   private endpointAt: number | undefined
+  /** Detection delay reported by the VAD itself, when the provider exposes one. */
+  private vadEndpointMs: number | undefined
 
   private speakStartedAt = 0
   private abort: Deferred<typeof ABORT> | undefined
@@ -152,12 +157,25 @@ export class CallSession {
     const stream = this.deps.stt.open(this.lang, { sampleRate: 16_000 })
     this.stream = stream
 
+    // Speech onset is the barge-in trigger. Measured over real WebRTC, keying off `partial`
+    // instead put barge-in about a second late, because a partial costs the recogniser's
+    // partial interval plus a transcription round trip — see STTEvents.speech_start.
+    stream.on('speech_start', () => {
+      this.lastPartialAt = this.now()
+      this.maybeBargeIn()
+    })
     stream.on('partial', () => {
       this.lastPartialAt = this.now()
       this.maybeBargeIn()
     })
     stream.on('endpoint', () => {
       this.endpointAt = this.now()
+      // Prefer the VAD's own figure. Measured over real WebRTC, the last-partial proxy read
+      // 573ms at p95 for a 250ms hangover, because faster-whisper emits partials on an
+      // interval and the last one can be stale by most of the budget.
+      this.vadEndpointMs = hasVadTiming(stream)
+        ? Math.max(0, stream.endpointDetectedAtMs - stream.lastSpeechEndedAtMs)
+        : undefined
       if (this.phase === 'listening') this.phase = 'resolving'
     })
     stream.on('final', (text) => {
@@ -252,7 +270,9 @@ export class CallSession {
     // Endpoint detection delay. Measured from the last partial, which is the recogniser's
     // most recent evidence of speech. A real VAD reports the true speech-stop instant and an
     // adapter that has it should supply it directly rather than inheriting this proxy.
-    if (this.endpointAt !== undefined && this.lastPartialAt !== undefined) {
+    if (this.vadEndpointMs !== undefined) {
+      timings.endpoint = this.vadEndpointMs
+    } else if (this.endpointAt !== undefined && this.lastPartialAt !== undefined) {
       timings.endpoint = Math.max(0, this.endpointAt - this.lastPartialAt)
     }
     if (this.endpointAt !== undefined) {
@@ -288,6 +308,7 @@ export class CallSession {
 
     this.endpointAt = undefined
     this.lastPartialAt = undefined
+    this.vadEndpointMs = undefined
 
     if (decision.ended) this.end()
     else this.phase = 'listening'

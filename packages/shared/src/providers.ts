@@ -17,6 +17,16 @@ export interface STTOpts {
 }
 
 export interface STTEvents {
+  /**
+   * Caller STARTED speaking, from the VAD — not the recogniser.
+   *
+   * This is the barge-in trigger, and it has to be this rather than `partial`. Measured over
+   * real WebRTC with faster-whisper, a first partial costs the partial interval (600ms) plus
+   * a transcription round trip (~300ms), so barge-in keyed off it arrives about a second late
+   * and misses short lines entirely. The VAD knows in ~40ms. A provider whose VAD cannot
+   * report speech onset should emit this on its first partial and accept the latency.
+   */
+  speech_start: (text: string) => void
   /** Interim hypothesis; may be revised. */
   partial: (text: string) => void
   /** Stable transcript for the utterance. */
@@ -34,6 +44,30 @@ export interface STTStream {
 export interface STTProvider {
   readonly name: string
   open(lang: Lang, opts: STTOpts): STTStream
+}
+
+/**
+ * A stream whose VAD can say when speech actually stopped.
+ *
+ * §6 budgets endpoint detection at 150-300ms, which is too tight to measure by proxy. Without
+ * this, the turn loop has to time from the last partial transcript — and a recogniser that
+ * emits partials on an interval makes that reading drift by hundreds of milliseconds, which
+ * is the whole budget. A provider that knows should say so; one that does not is measured the
+ * old way and the number is softer.
+ */
+export interface VadTimedSTTStream {
+  /** Audio position of the last frame that contained speech. */
+  readonly lastSpeechEndedAtMs: number
+  /** Audio position at which the endpoint was declared. */
+  readonly endpointDetectedAtMs: number
+}
+
+export function hasVadTiming(stream: STTStream): stream is STTStream & VadTimedSTTStream {
+  const candidate = stream as Partial<VadTimedSTTStream>
+  return (
+    typeof candidate.lastSpeechEndedAtMs === 'number' &&
+    typeof candidate.endpointDetectedAtMs === 'number'
+  )
 }
 
 export interface Voice {

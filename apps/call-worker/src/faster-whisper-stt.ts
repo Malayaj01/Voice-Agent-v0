@@ -245,6 +245,7 @@ function defaultScriptPath(): string {
 export class FasterWhisperSTTStream implements STTStream {
   private readonly vad: EnergyVad
   private readonly listeners: { [E in keyof STTEvents]: STTEvents[E][] } = {
+    speech_start: [],
     partial: [],
     final: [],
     endpoint: [],
@@ -300,6 +301,10 @@ export class FasterWhisperSTTStream implements STTStream {
     for (const event of events) {
       if (event.type === 'speech_start') {
         this.lastPartialAtMs = event.atMs
+        // Straight from the VAD, synchronously, before any transcription. This is what
+        // barge-in listens to: waiting for a partial costs the partial interval plus an ASR
+        // round trip, which is about a second too late.
+        this.emit('speech_start', '')
         continue
       }
 
