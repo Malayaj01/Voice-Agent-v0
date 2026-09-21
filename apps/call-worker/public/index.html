@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Voice Agent — call harness</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0f1115;
+        --panel: #171a21;
+        --line: #272c36;
+        --text: #e6e9ef;
+        --muted: #8b93a4;
+        --ok: #4ade80;
+        --warn: #fbbf24;
+        --bad: #f87171;
+        --accent: #60a5fa;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 24px 16px;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+      }
+      main { max-width: 880px; margin: 0 auto; }
+      h1 { font-size: 20px; margin: 0 0 4px; }
+      .sub { color: var(--muted); margin: 0 0 20px; }
+      .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 18px; }
+      button {
+        font: inherit; font-weight: 600; padding: 10px 20px; border-radius: 8px;
+        border: 1px solid var(--line); background: var(--accent); color: #0b1220; cursor: pointer;
+      }
+      button.secondary { background: transparent; color: var(--text); }
+      button:disabled { opacity: 0.45; cursor: not-allowed; }
+      .status { color: var(--muted); }
+      .status.live { color: var(--ok); }
+      .status.error { color: var(--bad); }
+      .panel {
+        background: var(--panel); border: 1px solid var(--line);
+        border-radius: 10px; padding: 14px 16px; margin-bottom: 16px;
+      }
+      .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em;
+        color: var(--muted); margin: 0 0 10px; }
+      table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+      th, td { text-align: right; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+      th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+      th { color: var(--muted); font-weight: 500; font-size: 12px; }
+      td.over { color: var(--warn); }
+      .turn { padding: 6px 0; border-bottom: 1px solid var(--line); }
+      .turn:last-child { border-bottom: 0; }
+      .who { color: var(--muted); font-size: 12px; }
+      .agent .who { color: var(--accent); }
+      pre#log {
+        margin: 0; max-height: 200px; overflow: auto; color: var(--muted);
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap;
+      }
+      .hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Voice Agent — call harness</h1>
+      <p class="sub">
+        Your browser joins a LiveKit room as a participant; the agent joins the same room.
+        This is the path a SIP call will take — the only difference is who dials.
+      </p>
+
+      <div class="row">
+        <button id="call">Call</button>
+        <button id="hangup" class="secondary" disabled>Hang up</button>
+        <span id="status" class="status">idle</span>
+      </div>
+      <p class="hint">Use headphones. Without them the bot hears itself and barges in on its own line.</p>
+
+      <div class="panel">
+        <h2>Conversation</h2>
+        <div id="turns"><span class="status">nothing yet</span></div>
+      </div>
+
+      <div class="panel">
+        <h2>Per-stage latency (§6 budget: endpoint 300 · stt 200 · intent 150 · tts 250 · total 800ms)</h2>
+        <table id="latency">
+          <thead>
+            <tr><th>#</th><th>line</th><th>endpoint</th><th>stt</th><th>intent</th><th>fsm</th><th>tts</th><th>egress</th><th>total</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <h2>Log</h2>
+        <pre id="log"></pre>
+      </div>
+    </main>
+
+    <script src="/livekit-client.umd.js"></script>
+    <script>
+      const $ = (id) => document.getElementById(id)
+      const BUDGET = { endpoint: 300, stt: 200, intent: 150, fsm: 1, tts_first_byte: 250, egress: 100, total: 800 }
+
+      let room = null
+      let callId = null
+      let poll = null
+
+      const log = (line) => {
+        $('log').textContent += `${new Date().toISOString().slice(11, 23)}  ${line}\n`
+        $('log').scrollTop = $('log').scrollHeight
+      }
+      const setStatus = (text, cls = '') => {
+        $('status').textContent = text
+        $('status').className = `status ${cls}`
+      }
+
+      async function startCall() {
+        $('call').disabled = true
+        setStatus('connecting…')
+        try {
+          const res = await fetch('/api/session', { method: 'POST' })
+          if (!res.ok) throw new Error(`session failed: ${res.status}`)
+          const session = await res.json()
+          callId = session.callId
+          log(`room ${session.roomName} as ${session.identity}`)
+
+          room = new LivekitClient.Room({ adaptiveStream: false, dynacast: false })
+
+          room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
+            if (track.kind !== 'audio') return
+            // Attaching creates an <audio> element that plays the agent's voice.
+            document.body.appendChild(track.attach())
+            log('agent audio attached')
+            setStatus('live — talk to the bot', 'live')
+          })
+          room.on(LivekitClient.RoomEvent.Disconnected, () => {
+            log('disconnected')
+            stopPolling()
+            setStatus('ended')
+            $('call').disabled = false
+            $('hangup').disabled = true
+          })
+
+          await room.connect(session.url, session.token)
+          log('connected')
+
+          // Echo cancellation on: without it the bot's own voice returns through the mic and
+          // triggers barge-in on every line. Same failure a SIP leg has, same fix.
+          await room.localParticipant.setMicrophoneEnabled(true, {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          })
+          log('microphone published')
+
+          $('hangup').disabled = false
+          startPolling()
+        } catch (err) {
+          log(`error: ${err.message}`)
+          setStatus(err.message, 'error')
+          $('call').disabled = false
+        }
+      }
+
+      async function hangup() {
+        if (room) await room.disconnect()
+        room = null
+      }
+
+      function startPolling() {
+        stopPolling()
+        poll = setInterval(refresh, 700)
+      }
+      function stopPolling() {
+        if (poll) clearInterval(poll)
+        poll = null
+      }
+
+      async function refresh() {
+        if (!callId) return
+        const res = await fetch(`/api/calls/${callId}`)
+        if (!res.ok) return
+        const data = await res.json()
+        renderTurns(data.turns)
+        renderLatency(data.turns)
+      }
+
+      function renderTurns(turns) {
+        if (!turns.length) return
+        $('turns').innerHTML = turns
+          .map(
+            (t) =>
+              `<div class="turn ${t.role}"><span class="who">${t.role}</span><br>${escapeHtml(t.text)}</div>`,
+          )
+          .join('')
+      }
+
+      function renderLatency(turns) {
+        const rows = turns.filter((t) => t.role === 'agent' && t.timings.total > 0)
+        $('latency').querySelector('tbody').innerHTML = rows
+          .map((t) => {
+            const cell = (k) => {
+              const v = t.timings[k]
+              if (v === undefined) return '<td>—</td>'
+              const over = BUDGET[k] !== undefined && v > BUDGET[k]
+              return `<td class="${over ? 'over' : ''}">${Math.round(v)}</td>`
+            }
+            return `<tr><td>${t.seq}</td><td>${escapeHtml(t.text.slice(0, 32))}…</td>${cell('endpoint')}${cell('stt')}${cell('intent')}${cell('fsm')}${cell('tts_first_byte')}${cell('egress')}${cell('total')}</tr>`
+          })
+          .join('')
+      }
+
+      const escapeHtml = (s) =>
+        String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+
+      $('call').addEventListener('click', startCall)
+      $('hangup').addEventListener('click', hangup)
+    </script>
+  </body>
+</html>
