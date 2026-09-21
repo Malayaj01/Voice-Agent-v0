@@ -123,6 +123,13 @@ function summarise(rows: readonly TurnWrite[]): {
 
 export interface HarnessOptions {
   port: number
+  /**
+   * Creates the `calls` row this call's turns hang off, and returns its id.
+   *
+   * `turns.call_id` is a foreign key, so inventing a random call id makes every turn write
+   * fail. Without a database the id is cosmetic and a random one is fine.
+   */
+  createCall?: () => Promise<string>
   livekit: LiveKitConfig
   flow: Flow
   lang: Lang
@@ -147,7 +154,7 @@ export function startHarness(opts: HarnessOptions): Promise<{ close: () => Promi
     const url = new URL(req.url ?? '/', 'http://localhost')
 
     if (url.pathname === '/api/session' && req.method === 'POST') {
-      const callId = randomUUID()
+      const callId = opts.createCall === undefined ? randomUUID() : await opts.createCall()
       const roomName = `harness-${callId.slice(0, 8)}`
       const identity = `caller-${callId}`
 
@@ -247,6 +254,16 @@ async function main(): Promise<void> {
   const lang = optionalEnv('HARNESS_LANG', 'en-IN') as Lang
 
   const tts = await startTtsRuntime(envToTtsRuntimeEnv(), flow)
+  // The mock TTS emits digital silence. That is right for tests and useless for a harness
+  // whose entire purpose is hearing the bot, so say so loudly rather than let it look broken.
+  if (tts.tts.name.includes('mock')) {
+    console.warn(
+      '[harness] WARNING: TTS_PROVIDER=mock synthesises SILENCE. The flow will run and the ' +
+        'turns will be recorded, but you will hear nothing at all. ' +
+        'Use TTS_PROVIDER=kokoro to actually talk to the bot.',
+    )
+  }
+
   const stt = new FasterWhisperSTTProvider({
     model: optionalEnv('STT_MODEL', 'distil-small.en'),
     partialIntervalMs: 600,
@@ -255,10 +272,14 @@ async function main(): Promise<void> {
 
   const databaseUrl = optionalEnv('DATABASE_URL', '')
   let turnSink: TurnSink = new InMemoryTurnSink()
+  let createCall: (() => Promise<string>) | undefined
   if (databaseUrl !== '') {
     const { default: pg } = await import('pg')
     const { PgTurnSink } = await import('../pg-turn-sink.js')
-    turnSink = new PgTurnSink(new pg.Pool({ connectionString: databaseUrl }))
+    const { ensureCallRecord } = await import('../call-record.js')
+    const pool = new pg.Pool({ connectionString: databaseUrl })
+    turnSink = new PgTurnSink(pool)
+    createCall = async () => (await ensureCallRecord(pool)).callId
     console.log('[harness] turns -> postgres')
   } else {
     console.log('[harness] turns -> memory (set DATABASE_URL to persist)')
@@ -290,6 +311,7 @@ async function main(): Promise<void> {
     // as they will on a real call. Falls back to memory so the harness runs without a
     // database, but then the turns rows exist only for the page.
     turnSinkFor: () => turnSink,
+    ...(createCall === undefined ? {} : { createCall }),
     stt,
     tts: tts.tts,
   })
