@@ -40,6 +40,48 @@ the DNC list, one has no consent record. Their numbers are **+999**, the ITU ran
 for trials that no carrier routes — a demo database is exactly where a plausible real number
 would sit unnoticed until something dialled it.
 
+### Talk to the bot without a carrier
+
+No SIP trunk needed. LiveKit does not distinguish a phone leg from a browser tab — both are
+participants publishing audio — so a browser can stand in for the caller and exercise the
+exact turn loop a real call will use.
+
+```bash
+# 1. a LiveKit server (the compose stack, or the standalone binary)
+docker compose up livekit
+
+# 2. the harness (needs Python + faster-whisper for real STT; TTS_PROVIDER=mock to skip Kokoro)
+node apps/call-worker/dist/livekit/harness.js
+
+# 3. open http://localhost:8090, click Call, talk. Use headphones.
+```
+
+The page shows the transcript and the per-stage §6 breakdown as the call runs. Set
+`DATABASE_URL` and the same rows land in `turns`.
+
+**Nothing in the agent is browser-aware.** The only transport-specific object is a
+`CallerSource`: the harness constructs a `JoiningCallerSource` (wait for whoever joins), and
+`dial.ts` constructs a `SipCallerSource` (place a call). `runCall`, `CallSession`, the FSM, the
+providers and the turns rows are identical either way — when the trunk arrives, that one line
+changes and nothing else does.
+
+`node apps/call-worker/dist/bench-webrtc.js` runs the same path unattended: a synthetic
+caller joins, speaks Kokoro-rendered utterances, and deliberately talks over the agent to
+prove barge-in. Measured over real WebRTC on a 12-core laptop:
+
+| stage | p50 | p95 | §6 budget |
+|---|---|---|---|
+| endpoint | 260ms | 260ms | 300ms |
+| stt | 418ms | 449ms | 200ms ⚠ |
+| intent | 1ms | 2ms | 150ms |
+| fsm | 0ms | 0ms | 1ms |
+| tts first byte | 2ms | 9ms | 250ms |
+| egress | 0ms | 6ms | 100ms |
+| **total** | **676ms** | **712ms** | **800ms** |
+
+STT is the one stage over budget — faster-whisper `tiny.en` on CPU. §5 already names the fix
+(Deepgram Nova-3, or Sarvam Saarika for Hinglish); everything else has headroom.
+
 ### What the local stack deliberately cannot do
 
 - **No telephony.** LiveKit runs, so the media plane is real, but a SIP trunk is a carrier
