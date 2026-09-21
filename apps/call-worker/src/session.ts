@@ -54,6 +54,7 @@ import {
   type TTSProvider,
   type TurnSink,
   type TurnTimings,
+  type TurnWrite,
   type Voice,
 } from '@voice-agent/shared'
 
@@ -290,7 +291,7 @@ export class CallSession {
     const fsmDoneAt = this.now()
     timings.fsm = fsmDoneAt - intentDoneAt
 
-    await this.deps.turns.record({
+    await this.recordTurn({
       callId: this.callId,
       seq: ++this.seq,
       role: 'caller',
@@ -312,6 +313,25 @@ export class CallSession {
 
     if (decision.ended) this.end()
     else this.phase = 'listening'
+  }
+
+  /**
+   * Persists a turn, and never lets that fail the call.
+   *
+   * A turn row is an observation. Losing one to a transient database error, a schema
+   * mismatch, or a missing `calls` row must not drop a caller mid-conversation — the write
+   * happens after the line has already been spoken, so by the time it fails there is nothing
+   * to gain by hanging up. Found the hard way: a foreign-key violation on the very first turn
+   * was ending every call in the browser harness right after the opening line.
+   */
+  private async recordTurn(turn: TurnWrite): Promise<void> {
+    try {
+      await this.deps.turns.record(turn)
+    } catch (err: unknown) {
+      console.error(
+        `[session ${this.callId}] could not persist turn ${turn.seq}: ${String(err)}`,
+      )
+    }
   }
 
   /** Speaks a line and writes the agent row carrying the turn's complete breakdown. */
@@ -336,7 +356,7 @@ export class CallSession {
     }
     this.spoken.push(turn)
 
-    await this.deps.turns.record({
+    await this.recordTurn({
       callId: this.callId,
       seq: turn.seq,
       role: 'agent',
