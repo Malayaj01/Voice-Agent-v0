@@ -126,12 +126,43 @@
 
           room = new LivekitClient.Room({ adaptiveStream: false, dynacast: false })
 
-          room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
+          room.on(LivekitClient.RoomEvent.TrackSubscribed, async (track) => {
             if (track.kind !== 'audio') return
             // Attaching creates an <audio> element that plays the agent's voice.
-            document.body.appendChild(track.attach())
+            const el = track.attach()
+            el.autoplay = true
+            document.body.appendChild(el)
             log('agent audio attached')
+
+            // Browsers block audio that is not tied to a user gesture. We are inside the
+            // click that started the call, so this is the moment it can be unblocked — and
+            // without it the agent speaks and the page stays silent, which looks exactly
+            // like a broken bot.
+            if (!room.canPlaybackAudio) {
+              try {
+                await room.startAudio()
+                log('audio playback unblocked')
+              } catch (err) {
+                setStatus('click anywhere to allow audio', 'error')
+                log(`audio blocked by the browser: ${err.message}`)
+              }
+            }
             setStatus('live — talk to the bot', 'live')
+          })
+
+          // If playback is still blocked, the next click anywhere will lift it.
+          room.on(LivekitClient.RoomEvent.AudioPlaybackStatusChanged, () => {
+            if (room.canPlaybackAudio) return
+            log('audio is blocked — click the page to allow it')
+            const unblock = async () => {
+              await room.startAudio().catch(() => undefined)
+              if (room.canPlaybackAudio) {
+                log('audio playback unblocked')
+                setStatus('live — talk to the bot', 'live')
+                document.removeEventListener('click', unblock)
+              }
+            }
+            document.addEventListener('click', unblock)
           })
           room.on(LivekitClient.RoomEvent.Disconnected, () => {
             log('disconnected')
@@ -155,6 +186,15 @@
 
           $('hangup').disabled = false
           startPolling()
+
+          // The agent speaks first. If no audio arrives, something upstream failed — say so
+          // rather than sitting on "connecting" forever.
+          setTimeout(() => {
+            if (room && !room.remoteParticipants.size) {
+              setStatus('no agent in the room — check the harness log', 'error')
+              log('no remote participant after 10s: is LIVEKIT_URL reachable from the worker?')
+            }
+          }, 10000)
         } catch (err) {
           log(`error: ${err.message}`)
           setStatus(err.message, 'error')

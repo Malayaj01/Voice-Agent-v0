@@ -50,8 +50,9 @@ exact turn loop a real call will use.
 # 1. a LiveKit server (the compose stack, or the standalone binary)
 docker compose up livekit
 
-# 2. the harness (needs Python + faster-whisper for real STT; TTS_PROVIDER=mock to skip Kokoro)
-node apps/call-worker/dist/livekit/harness.js
+# 2. the harness. Needs Python + faster-whisper for STT, and Kokoro for speech.
+#    TTS_PROVIDER=mock synthesises SILENCE — fine for tests, useless here.
+TTS_PROVIDER=kokoro node apps/call-worker/dist/livekit/harness.js
 
 # 3. open http://localhost:8090, click Call, talk. Use headphones.
 ```
