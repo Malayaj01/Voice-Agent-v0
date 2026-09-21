@@ -1,0 +1,25 @@
+# Self-hosted LiveKit for the local stack — ARCHITECTURE.md §4.
+#
+# Development keys, committed on purpose: the whole point of this stack is that a clean clone
+# comes up with no accounts and nothing to sign up for. They are valid only for a LiveKit
+# instance you run yourself on localhost.
+#
+# NEVER use these anywhere reachable. A LiveKit server with a published key is an open media
+# relay for whoever finds it.
+
+port: 7880
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  # Containers have no meaningful external IP, and STUN lookups just slow startup here.
+  use_external_ip: false
+
+keys:
+  # LiveKit requires a secret of at least 32 characters.
+  devkey: devsecret_local_only_not_for_any_deployment
+
+logging:
+  level: info
+  json: false

@@ -1,0 +1,153 @@
+# The full local stack — zero external accounts.
+#
+#   docker compose up
+#
+# Brings up Postgres 16 with pgvector (migrations applied), a self-hosted LiveKit server, the
+# demo seed, and all three apps. Nothing here needs a signup, an API key, or a card.
+#
+# WHAT THIS STACK CANNOT DO, stated up front rather than discovered:
+#
+#   - No telephony. LiveKit runs, so the media plane is real, but a SIP trunk is a carrier
+#     relationship and there is no such thing as a free local one. `voice-flow`-driven dialing
+#     stays blocked on Phase 0 regardless (ARCHITECTURE.md §2).
+#   - Mock STT and TTS by default. Kokoro and faster-whisper work — they are measured in the
+#     README — but they pull ~400MB of model weights and minutes of CPU, which is the wrong
+#     default for `docker compose up` on a clean clone. Set TTS_PROVIDER=kokoro to switch.
+#
+# What it does do: a real schema built by the real migrations, a seeded campaign, the flow
+# loaded from script_versions and hot-reloaded on change, the TTS cache pre-warmed from the
+# flow's reachable lines, and three services reporting healthy.
+#
+# The turn loop itself runs per call, and without telephony there are no calls — it is
+# exercised by the test suite, not by this stack.
+
+name: voice-agent
+
+services:
+  postgres:
+    # pgvector rather than stock postgres: migration 0005 creates the vector extension.
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: voice
+      POSTGRES_PASSWORD: voice
+      POSTGRES_DB: voice_agent
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Postgres runs everything here once, in filename order, on an empty data directory —
+      # which is exactly our 0001..0006 migration sequence. Changing a migration afterwards
+      # needs `docker compose down -v`, because initdb does not re-run.
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U voice -d voice_agent']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /etc/livekit.yaml
+    volumes:
+      - ./deploy/livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - '7880:7880'
+      - '7881:7881'
+      # RTC media. Narrow on purpose — the full default range is thousands of published ports.
+      - '50000-50100:50000-50100/udp'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O- http://localhost:7880/ >/dev/null 2>&1 || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # One-shot. Publishes the flow into script_versions and inserts the demo campaign and leads.
+  # Everything downstream waits for it, because a worker with no active script cannot boot.
+  seed:
+    build:
+      context: .
+    image: voice-agent:local
+    command: ['node', 'apps/control-plane/dist/seed.js']
+    environment:
+      DATABASE_URL: postgres://voice:voice@postgres:5432/voice_agent
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  control-plane:
+    image: voice-agent:local
+    build:
+      context: .
+    command: ['node', 'apps/control-plane/dist/index.js']
+    environment:
+      DATABASE_URL: postgres://voice:voice@postgres:5432/voice_agent
+      CONTROL_PLANE_PORT: '8080'
+    ports:
+      - '8080:8080'
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ['CMD-SHELL', 'node -e "fetch(\"http://localhost:8080/health\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"']
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  dialer:
+    image: voice-agent:local
+    build:
+      context: .
+    command: ['node', 'apps/dialer/dist/index.js']
+    environment:
+      DATABASE_URL: postgres://voice:voice@postgres:5432/voice_agent
+      DIALER_PORT: '8081'
+      # The dialer refuses to place calls without these. Left false on purpose: Phase 0 is a
+      # registration, not a setting, and a stack that dialled out of the box would be a bug.
+      DLT_PE_REGISTERED: 'false'
+      DLT_TM_REGISTERED: 'false'
+      DLT_LINKAGE_ACTIVE: 'false'
+    ports:
+      - '8081:8081'
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ['CMD-SHELL', 'node -e "fetch(\"http://localhost:8081/health\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"']
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  call-worker:
+    image: voice-agent:local
+    build:
+      context: .
+    command: ['node', 'apps/call-worker/dist/index.js']
+    environment:
+      DATABASE_URL: postgres://voice:voice@postgres:5432/voice_agent
+      CALL_WORKER_PORT: '8082'
+      # Flow comes from script_versions, polled — edit the active row and the worker picks it
+      # up without a restart.
+      FLOW_POLL_MS: '10000'
+      # Mocks by default; see the note at the top of this file.
+      TTS_PROVIDER: mock
+      AUDIO_CACHE_DIR: /app/.cache/audio
+      MAX_CONCURRENT_CALLS: '25'
+      LIVEKIT_URL: ws://livekit:7880
+      LIVEKIT_API_KEY: devkey
+      LIVEKIT_API_SECRET: devsecret_local_only_not_for_any_deployment
+    ports:
+      - '8082:8082'
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      livekit:
+        condition: service_started
+    healthcheck:
+      test: ['CMD-SHELL', 'node -e "fetch(\"http://localhost:8082/health\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"']
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+volumes:
+  postgres-data:

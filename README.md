@@ -10,6 +10,62 @@ on a real Indian phone number**, under TRAI/DLT compliance, at a **sub-800ms tur
 
 ---
 
+## Running it locally
+
+`docker compose up` brings up the whole stack from a clean clone. **No accounts, no API keys,
+nothing to sign up for.**
+
+```bash
+git clone https://github.com/Malayaj01/Voice-Agent-v0.git
+cd Voice-Agent-v0
+docker compose up          # first build pulls the toolchain; later starts are seconds
+```
+
+| Service | Port | What it is |
+|---|---|---|
+| `postgres` | 5432 | Postgres 16 + pgvector, migrations applied on first start |
+| `livekit` | 7880 | self-hosted LiveKit server (§4) |
+| `control-plane` | 8080 | campaigns, leads, script versions |
+| `dialer` | 8081 | compliance gates and pacing |
+| `call-worker` | 8082 | hosts the turn loop; boots the flow and warms the TTS cache |
+
+```bash
+curl localhost:8082/health
+# {"status":"ok","checks":{"flow":"ok","tts":"ok"}}
+```
+
+The `seed` service publishes the flow into `script_versions` and inserts a demo campaign with
+four leads, shaped so the compliance gates are demonstrable: one passes everything, one is on
+the DNC list, one has no consent record. Their numbers are **+999**, the ITU range reserved
+for trials that no carrier routes — a demo database is exactly where a plausible real number
+would sit unnoticed until something dialled it.
+
+### What the local stack deliberately cannot do
+
+- **No telephony.** LiveKit runs, so the media plane is real, but a SIP trunk is a carrier
+  relationship and there is no free local equivalent. Outbound dialing is blocked on Phase 0
+  regardless — see below.
+- **Mock STT and TTS by default.** Kokoro and faster-whisper both work and are measured
+  below, but they pull ~400MB of weights and minutes of CPU, which is the wrong default for a
+  clean clone. Set `TTS_PROVIDER=kokoro` on `call-worker` to switch.
+- **It will not place a call.** Every gate defaults to failing and `DLT_*` registration is
+  off, so the stack cannot dial out of the box. That is the intended behaviour, not a
+  limitation to work around.
+
+```bash
+docker compose down -v     # reset, including the database volume
+```
+
+Migrations run through Postgres's init directory, which only executes on an empty data
+directory — so changing a migration needs `down -v`.
+
+### Without Docker
+
+```bash
+npm ci && npm run build && npm test
+npx voice-flow validate db/seed/flow-v1.yaml --strict
+```
+
 ## The short version
 
 **2,000 calls/day is ~2.5 concurrent calls** (Little's Law: `L = λ × W`), with a design
