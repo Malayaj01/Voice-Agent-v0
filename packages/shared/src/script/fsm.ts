@@ -204,8 +204,13 @@ export class Fsm {
     this.flags.push(...added)
 
     // `{{intent}}` lets the shared objection routine address one rebuttal per objection
-    // without needing a rule for each.
-    const vars: LineVars = { ...this.vars, intent }
+    // without needing a rule for each. `{{anchor_question}}` is bound from the state being
+    // held, so an off-script reply re-asks THIS state's question rather than the opening one.
+    const vars: LineVars = {
+      ...this.vars,
+      intent,
+      ...this.anchorFor(fromState),
+    }
 
     // A state's own `say` is the entry line, used when a transition moves to it without
     // naming a line of its own.
@@ -217,6 +222,19 @@ export class Fsm {
     if (t.end === true || terminal) this.ended = true
 
     return { intent, fromState, nextState, line, ended: this.ended, flags: added }
+  }
+
+  /** The question this state asked, for `{{anchor_question}}`. */
+  private anchorFor(stateName: string): LineVars {
+    const anchor = this.flow.states[stateName]?.anchor
+    if (anchor === undefined) return {}
+    try {
+      return { anchor_question: resolveLine(this.flow, anchor, this.lang, this.vars).text }
+    } catch {
+      // A missing anchor line must not break the call; the caller just hears the generic
+      // apology without a question after it.
+      return {}
+    }
   }
 
   private noop(intent: string): FsmDecision {

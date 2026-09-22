@@ -97,6 +97,15 @@ export const TransitionListSchema = z
 export const StateSchema = z
   .object({
     say: SaySchema.optional(),
+    /**
+     * The question to repeat when the caller goes off-script in this state.
+     *
+     * Off-script holds position and re-anchors (§7.2), and the anchor has to be the question
+     * this state actually asked. A single static one replays the opening no matter how far
+     * the call has got, which is how a caller at PITCH ends up being asked "Got a minute?"
+     * again.
+     */
+    anchor: SaySchema.optional(),
     on: z.record(z.string().min(1), TransitionListSchema).optional(),
     default: TransitionSchema.optional(),
     terminal: z.boolean().optional(),

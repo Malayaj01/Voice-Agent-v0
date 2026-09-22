@@ -100,18 +100,23 @@ on_silence:
 states:
   OPENING:
     say: opening
+    # Off-script holds position and re-asks THIS question, not the opening one from wherever
+    # the call happens to be.
+    anchor: anchor_opening
     default:
       say: context_bridge
       goto: CONTEXT_BRIDGE
 
   CONTEXT_BRIDGE:
     say: context_bridge
+    anchor: anchor_context_bridge
     default:
       say: pitch
       goto: PITCH
 
   PITCH:
     say: pitch
+    anchor: anchor_pitch
     on:
       acknowledge: CLOSE
       interested: CLOSE
@@ -127,6 +132,7 @@ states:
 
   CLOSE:
     say: close
+    anchor: anchor_close
     on:
       accept_slot:
         say: wrap_up_booked
@@ -214,6 +220,23 @@ lines:
   hold_on_script:
     en-IN: "Sorry, I didn't catch that. {{anchor_question}}"
     hi-IN-hinglish: "Maaf kijiye, samajh nahi aaya. {{anchor_question}}"
+
+  # Per-state anchors. These are the questions an off-script reply gets re-asked.
+  anchor_opening:
+    en-IN: "Got a minute?"
+    hi-IN-hinglish: "Ek minute hai?"
+
+  anchor_context_bridge:
+    en-IN: "Does that sound like something you deal with?"
+    hi-IN-hinglish: "Aapke yahan bhi aisa hota hai kya?"
+
+  anchor_pitch:
+    en-IN: "Would a short demo be useful?"
+    hi-IN-hinglish: "Ek chhota demo useful rahega?"
+
+  anchor_close:
+    en-IN: "Shall I lock {{slot_first}}?"
+    hi-IN-hinglish: "{{slot_first}} fix kar doon?"
 
   nudge:
     en-IN: "Are you still there?"

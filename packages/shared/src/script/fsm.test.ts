@@ -285,3 +285,46 @@ states:
     assert.notEqual(a, lineCacheKey('hello', 'v1', 'hi-IN-hinglish'))
   })
 })
+
+describe('off-script anchoring', () => {
+  /**
+   * The bot must re-ask the question it actually asked. A single static anchor replays the
+   * opening from wherever the call has got to — seen live as a caller at PITCH being asked
+   * "Got a minute?" again, which reads as a bot stuck in a loop.
+   */
+  it('re-asks the current state question, not the opening one', () => {
+    const anchors = new Map<string, string>()
+
+    for (const path of [[], ['acknowledge'], ['acknowledge', 'acknowledge']]) {
+      const m = fsm()
+      m.start()
+      for (const intent of path) m.advance(intent)
+
+      const state = m.currentState
+      const line = m.advance('unclear').line?.text ?? ''
+      assert.match(line, /didn't catch that/, `${state} should hold position`)
+      anchors.set(state, line)
+    }
+
+    assert.equal(anchors.size, 3, 'walked three distinct states')
+    assert.equal(
+      new Set(anchors.values()).size,
+      3,
+      `each state must re-anchor differently, got ${JSON.stringify([...anchors])}`,
+    )
+    assert.match(anchors.get('OPENING') ?? '', /Got a minute/)
+    assert.doesNotMatch(
+      anchors.get('PITCH') ?? '',
+      /Got a minute/,
+      'PITCH must not replay the opening question',
+    )
+  })
+
+  it('still holds position rather than advancing', () => {
+    const m = fsm()
+    m.advance('acknowledge')
+    const before = m.currentState
+
+    assert.equal(m.advance('unclear').nextState, before)
+  })
+})
