@@ -65,6 +65,19 @@ def _load(req_id: int) -> None:
     )
 
 
+def _dedupe(text: str) -> str:
+    """Drops a transcript that is the same phrase repeated.
+
+    The thresholds above catch most of it, but a short loop like "Hello. Hello. Hello."
+    compresses poorly enough to survive. A caller does not say the same sentence four times,
+    so treating that as silence is safer than feeding it to the classifier.
+    """
+    parts = [p.strip() for p in text.replace("!", ".").replace("?", ".").split(".") if p.strip()]
+    if len(parts) >= 3 and len(set(p.lower() for p in parts)) == 1:
+        return ""
+    return text
+
+
 def _transcribe(req: dict) -> None:
     if _model is None:
         raise RuntimeError("model not loaded")
@@ -88,10 +101,20 @@ def _transcribe(req: dict) -> None:
         # The VAD upstream already decided what is speech. Running another one here would
         # second-guess the component whose timing the whole §6 budget is built around.
         vad_filter=False,
+        # Whisper will happily continue a previous hallucination if allowed to see it.
         condition_on_previous_text=False,
+        # Hallucination guards. Handed a segment of room noise, Whisper invents fluent text
+        # and often loops it: "We can't do that. We can't do that. We can't do that." Observed
+        # on live microphone audio, where it reached the FSM as a real utterance.
+        # compression_ratio catches the looping, no_speech/log_prob catch the inventing.
+        compression_ratio_threshold=2.4,
+        log_prob_threshold=-1.0,
+        no_speech_threshold=0.6,
         initial_prompt=req.get("prompt") or None,
     )
-    text = "".join(segment.text for segment in segments).strip()
+
+    kept = [s for s in segments if getattr(s, "no_speech_prob", 0.0) < 0.6]
+    text = _dedupe("".join(segment.text for segment in kept).strip())
 
     _emit(
         {
