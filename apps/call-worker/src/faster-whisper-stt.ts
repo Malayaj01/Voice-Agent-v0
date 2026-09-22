@@ -57,6 +57,15 @@ export interface FasterWhisperOptions {
   partialIntervalMs?: number
   /** Emitting partials costs a transcription each; off is a valid production choice. */
   emitPartials?: boolean
+  /**
+   * Speech shorter than this is not a turn.
+   *
+   * A cough, a door, a keyboard — the VAD fires, Whisper is handed 200ms of nothing and
+   * invents a sentence, and the FSM answers a caller who never spoke. Observed on live
+   * microphone audio as a loop of "Sorry, I didn't catch that." 320ms is shorter than any
+   * real word plus its onset.
+   */
+  minSpeechMs?: number
   vad?: Omit<VadConfig, 'sampleRate'>
 }
 
@@ -68,7 +77,12 @@ export interface FasterWhisperOptions {
  * is the contract; which ASR produces the text is not.
  */
 export interface SttHost {
-  readonly opts: { emitPartials: boolean; partialIntervalMs: number; vad: Omit<VadConfig, 'sampleRate'> }
+  readonly opts: {
+    emitPartials: boolean
+    partialIntervalMs: number
+    minSpeechMs?: number
+    vad: Omit<VadConfig, 'sampleRate'>
+  }
   transcribe(pcm: Buffer, rate: number, lang: Lang, partial: boolean): Promise<{ text: string; ms: number }>
 }
 
@@ -99,6 +113,7 @@ export class FasterWhisperSTTProvider implements STTProvider, SttHost {
       scriptPath: opts.scriptPath ?? defaultScriptPath(),
       partialIntervalMs: opts.partialIntervalMs ?? 600,
       emitPartials: opts.emitPartials ?? true,
+      minSpeechMs: opts.minSpeechMs ?? 320,
       vad: opts.vad ?? {},
     }
   }
@@ -266,6 +281,8 @@ export class FasterWhisperSTTStream implements STTStream {
    * matters.
    */
   lastSpeechEndedAtMs = 0
+  /** Audio position where the current utterance began, for the minimum-duration check. */
+  private speechStartedAtMs = 0
   /** Audio position at which the endpoint was declared. */
   endpointDetectedAtMs = 0
 
@@ -300,11 +317,21 @@ export class FasterWhisperSTTStream implements STTStream {
 
     for (const event of events) {
       if (event.type === 'speech_start') {
+        this.speechStartedAtMs = event.atMs
         this.lastPartialAtMs = event.atMs
         // Straight from the VAD, synchronously, before any transcription. This is what
         // barge-in listens to: waiting for a partial costs the partial interval plus an ASR
         // round trip, which is about a second too late.
         this.emit('speech_start', '')
+        continue
+      }
+
+      // Too short to be speech: drop it without emitting anything. Not a turn the caller
+      // took, so it must not start the turn clock or reach the FSM.
+      const speechMs = event.speechEndedAtMs - this.speechStartedAtMs
+      if (speechMs < (this.provider.opts.minSpeechMs ?? 0)) {
+        this.speech = []
+        this.speechBytes = 0
         continue
       }
 

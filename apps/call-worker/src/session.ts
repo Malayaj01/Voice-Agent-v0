@@ -265,6 +265,18 @@ export class CallSession {
   private async handleUtterance(text: string): Promise<void> {
     if (this.phase === 'ended') return
 
+    // The recogniser produced nothing usable — a suppressed hallucination, or noise the VAD
+    // took for speech. Driving the FSM with it classifies as `unclear` and answers "sorry, I
+    // didn't catch that" at a caller who never spoke, which on live audio became a loop.
+    // Silence is not a turn; wait for a real one.
+    if (text.trim() === '') {
+      this.endpointAt = undefined
+      this.lastPartialAt = undefined
+      this.vadEndpointMs = undefined
+      this.phase = 'listening'
+      return
+    }
+
     const finalAt = this.now()
     const timings: TurnTimings = {}
 
